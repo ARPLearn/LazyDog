@@ -6,6 +6,8 @@ import robot
 import time
 import tflite_runtime.interpreter as tflite
 import math
+from collections import deque
+from bark import play_bark
 
 curpath = os.path.realpath(__file__)
 thisPath = "/" + os.path.dirname(curpath)
@@ -43,7 +45,6 @@ def calculate_angle(point1, point2, point3):
     bc = c - b
     
     cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
-    # Ensure the value is in valid range for arccos
     cosine_angle = np.clip(cosine_angle, -1.0, 1.0)
     angle = np.arccos(cosine_angle)
     
@@ -57,7 +58,6 @@ class Camera(BaseCamera):
         model_path = os.path.join(thisPath, 'models/movenet_single_pose_lightning_ptq.tflite')
         self.interpreter = None
         try:
-            print(f"Loading model from: {model_path}")
             self.interpreter = tflite.Interpreter(model_path=model_path)
             self.interpreter.allocate_tensors()
             self.input_details = self.interpreter.get_input_details()
@@ -66,12 +66,17 @@ class Camera(BaseCamera):
         except Exception as e:
             print(f"Error loading model: {e}")
             
+        # Initialize slouch detection parameters
+        self.slouch_window = deque(maxlen=30)  # Store last 30 frames of posture angles
+        self.slouch_count = 0
+        self.slouch_threshold = 150  # Adjusted to be less sensitive
+        self.slouch_trigger_count = 15  # Need 15 frames of slouching to trigger
+        
         if os.environ.get('OPENCV_CAMERA_SOURCE'):
             Camera.set_video_source(int(os.environ['OPENCV_CAMERA_SOURCE']))
         super(Camera, self).__init__()
 
     def check_side_visibility(self, keypoints, side='right'):
-        """Check which side is more visible based on keypoint confidence"""
         if side == 'right':
             side_points = [keypoints[KEYPOINT_DICT['right_ear']][2],
                          keypoints[KEYPOINT_DICT['right_shoulder']][2],
@@ -82,6 +87,19 @@ class Camera(BaseCamera):
                          keypoints[KEYPOINT_DICT['left_hip']][2]]
         
         return np.mean(side_points)
+
+    def check_arm_raised(self, keypoints, height, width):
+        """Check if arm is raised to control robot movement"""
+        right_shoulder = keypoints[KEYPOINT_DICT['right_shoulder']]
+        right_wrist = keypoints[KEYPOINT_DICT['right_wrist']]
+        
+        if right_shoulder[2] > 0.3 and right_wrist[2] > 0.3:
+            shoulder_y = right_shoulder[0] * height
+            wrist_y = right_wrist[0] * height
+            
+            if wrist_y < shoulder_y - 30:  # Wrist significantly above shoulder
+                return True
+        return False
 
     def process_pose(self, frame):
         if self.interpreter is None:
@@ -100,34 +118,39 @@ class Camera(BaseCamera):
 
             # Get keypoints
             keypoints = self.interpreter.get_tensor(self.output_details[0]['index'])
-            keypoints = keypoints[0, 0]  # First person, first instance
+            keypoints = keypoints[0, 0]
             
             # Process keypoints
             height, width = frame.shape[:2]
             processed_keypoints = []
             
-            # Draw keypoints and collect valid ones
+            # Draw keypoints
             for idx, keypoint in enumerate(keypoints):
                 y, x, confidence = keypoint
                 if confidence > 0.3:
                     x_px = min(width-1, int(x * width))
                     y_px = min(height-1, int(y * height))
                     cv2.circle(frame, (x_px, y_px), 5, (0, 0, 255), -1)
-                    cv2.putText(frame, str(idx), (x_px + 5, y_px), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                     processed_keypoints.append((x_px, y_px))
                 else:
                     processed_keypoints.append(None)
 
-            # Check which side is more visible
+            # Check for arm raise to control robot
+            if self.check_arm_raised(keypoints, height, width):
+                cv2.putText(frame, "ARM RAISED - Moving Forward", 
+                          (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 
+                          1, (0, 255, 0), 2)
+                robot.forward()
+            else:
+                robot.stopFB()
+
+            # Check which side is more visible for posture detection
             right_visibility = self.check_side_visibility(keypoints, 'right')
             left_visibility = self.check_side_visibility(keypoints, 'left')
             
-            # Initialize variables for angle calculation
             ear = shoulder = hip = None
             side_text = ""
             
-            # Select the more visible side
             if right_visibility > left_visibility and right_visibility > 0.3:
                 ear = processed_keypoints[KEYPOINT_DICT['right_ear']]
                 shoulder = processed_keypoints[KEYPOINT_DICT['right_shoulder']]
@@ -139,33 +162,32 @@ class Camera(BaseCamera):
                 hip = processed_keypoints[KEYPOINT_DICT['left_hip']]
                 side_text = "Left"
 
-            # Check posture if we have valid points
+            # Process posture if we have valid points
             if all(point is not None for point in [ear, shoulder, hip]):
                 posture_angle = calculate_angle(ear, shoulder, hip)
                 
                 if posture_angle is not None:
+                    # Add current angle to window
+                    self.slouch_window.append(posture_angle < self.slouch_threshold)
+                    
+                    # Calculate percentage of slouched frames
+                    slouch_percentage = sum(self.slouch_window) / len(self.slouch_window) * 100
+                    
                     # Draw the angle and side being tracked
                     cv2.putText(frame, f"{side_text} Side Angle: {posture_angle:.1f}", 
                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
                               1, (255, 255, 255), 2)
-
-                    # Check if slouching
-                    if posture_angle < 160:  # Adjustable threshold
+                    
+                    # Draw posture indicator
+                    if len(self.slouch_window) >= self.slouch_trigger_count and \
+                       slouch_percentage > 80:  # 80% of recent frames show slouching
                         cv2.putText(frame, "SLOUCHING DETECTED!", 
-                                  (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 
+                                  (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 
                                   1, (0, 0, 255), 2)
-                        #robot.backward()  # Or any other feedback you want
-                    else:
-                        #robot.stopFB()
-                        pass
-
+                    
                     # Draw posture lines
                     cv2.line(frame, ear, shoulder, (0, 255, 0), 2)
                     cv2.line(frame, shoulder, hip, (0, 255, 0), 2)
-            else:
-                cv2.putText(frame, "Please face sideways", 
-                          (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                          1, (0, 255, 255), 2)
 
             return frame
 
