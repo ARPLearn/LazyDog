@@ -5,6 +5,7 @@ import numpy as np
 import robot
 import time
 import tflite_runtime.interpreter as tflite
+import math
 
 curpath = os.path.realpath(__file__)
 thisPath = "/" + os.path.dirname(curpath)
@@ -29,6 +30,25 @@ KEYPOINT_DICT = {
     'right_ankle': 16
 }
 
+def calculate_angle(point1, point2, point3):
+    """Calculate angle between three points"""
+    if any(p is None for p in [point1, point2, point3]):
+        return None
+        
+    a = np.array(point1)
+    b = np.array(point2)
+    c = np.array(point3)
+    
+    ba = a - b
+    bc = c - b
+    
+    cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+    # Ensure the value is in valid range for arccos
+    cosine_angle = np.clip(cosine_angle, -1.0, 1.0)
+    angle = np.arccos(cosine_angle)
+    
+    return np.degrees(angle)
+
 class Camera(BaseCamera):
     video_source = 0
     modeSelect = 'pose'
@@ -43,8 +63,6 @@ class Camera(BaseCamera):
             self.input_details = self.interpreter.get_input_details()
             self.output_details = self.interpreter.get_output_details()
             print("Model loaded successfully")
-            print("Input details:", self.input_details)
-            print("Output details:", self.output_details)
         except Exception as e:
             print(f"Error loading model: {e}")
             
@@ -52,101 +70,102 @@ class Camera(BaseCamera):
             Camera.set_video_source(int(os.environ['OPENCV_CAMERA_SOURCE']))
         super(Camera, self).__init__()
 
+    def check_side_visibility(self, keypoints, side='right'):
+        """Check which side is more visible based on keypoint confidence"""
+        if side == 'right':
+            side_points = [keypoints[KEYPOINT_DICT['right_ear']][2],
+                         keypoints[KEYPOINT_DICT['right_shoulder']][2],
+                         keypoints[KEYPOINT_DICT['right_hip']][2]]
+        else:
+            side_points = [keypoints[KEYPOINT_DICT['left_ear']][2],
+                         keypoints[KEYPOINT_DICT['left_shoulder']][2],
+                         keypoints[KEYPOINT_DICT['left_hip']][2]]
+        
+        return np.mean(side_points)
+
     def process_pose(self, frame):
         if self.interpreter is None:
-            print("No interpreter loaded")
             return frame
 
         try:
-            print(f"Frame shape: {frame.shape}")
-
             # Prepare input image
             input_size = 192
             input_image = cv2.resize(frame, (input_size, input_size))
             input_image = cv2.cvtColor(input_image, cv2.COLOR_BGR2RGB)
-            
-            # Keep as uint8 (0-255) instead of converting to float32
             input_image = np.expand_dims(input_image, axis=0)
-            
-            print(f"Processed input shape: {input_image.shape}")
-            print(f"Input dtype: {input_image.dtype}")
 
-            # Run model
+            # Run inference
             self.interpreter.set_tensor(self.input_details[0]['index'], input_image)
-            print("Running inference...")
             self.interpreter.invoke()
-            print("Inference complete")
 
-            # Get output
+            # Get keypoints
             keypoints = self.interpreter.get_tensor(self.output_details[0]['index'])
-            print(f"Raw output shape: {keypoints.shape}")
-            print(f"First few keypoints: {keypoints[0,0,:3]}")
-
-            # Process keypoints
-            height, width = frame.shape[:2]
             keypoints = keypoints[0, 0]  # First person, first instance
             
-            # Draw keypoints
+            # Process keypoints
+            height, width = frame.shape[:2]
+            processed_keypoints = []
+            
+            # Draw keypoints and collect valid ones
             for idx, keypoint in enumerate(keypoints):
                 y, x, confidence = keypoint
-                print(f"Keypoint {idx}: x={x:.2f}, y={y:.2f}, conf={confidence:.2f}")
-                
-                if confidence > 0.3:  # Confidence threshold
+                if confidence > 0.3:
                     x_px = min(width-1, int(x * width))
                     y_px = min(height-1, int(y * height))
-                    # Draw a large red circle
-                    cv2.circle(frame, (x_px, y_px), 10, (0, 0, 255), -1)
-                    # Draw keypoint label
-                    cv2.putText(frame, str(idx), (x_px, y_px), 
+                    cv2.circle(frame, (x_px, y_px), 5, (0, 0, 255), -1)
+                    cv2.putText(frame, str(idx), (x_px + 5, y_px), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-            # Draw skeleton lines
-            skeleton_pairs = [
-                (KEYPOINT_DICT['left_shoulder'], KEYPOINT_DICT['right_shoulder']),
-                (KEYPOINT_DICT['left_shoulder'], KEYPOINT_DICT['left_elbow']),
-                (KEYPOINT_DICT['right_shoulder'], KEYPOINT_DICT['right_elbow']),
-                (KEYPOINT_DICT['left_elbow'], KEYPOINT_DICT['left_wrist']),
-                (KEYPOINT_DICT['right_elbow'], KEYPOINT_DICT['right_wrist']),
-                (KEYPOINT_DICT['left_shoulder'], KEYPOINT_DICT['left_hip']),
-                (KEYPOINT_DICT['right_shoulder'], KEYPOINT_DICT['right_hip']),
-                (KEYPOINT_DICT['left_hip'], KEYPOINT_DICT['right_hip']),
-                (KEYPOINT_DICT['left_hip'], KEYPOINT_DICT['left_knee']),
-                (KEYPOINT_DICT['right_hip'], KEYPOINT_DICT['right_knee']),
-                (KEYPOINT_DICT['left_knee'], KEYPOINT_DICT['left_ankle']),
-                (KEYPOINT_DICT['right_knee'], KEYPOINT_DICT['right_ankle'])
-            ]
-
-            for pair in skeleton_pairs:
-                if (keypoints[pair[0]][2] > 0.3 and 
-                    keypoints[pair[1]][2] > 0.3):  # Check confidence
-                    
-                    start_point = keypoints[pair[0]]
-                    end_point = keypoints[pair[1]]
-                    
-                    start_x = int(start_point[1] * width)
-                    start_y = int(start_point[0] * height)
-                    end_x = int(end_point[1] * width)
-                    end_y = int(end_point[0] * height)
-                    
-                    cv2.line(frame, (start_x, start_y), (end_x, end_y), 
-                            (0, 255, 255), 4)  # Thick yellow lines
-
-            # Check for pose-based control
-            right_shoulder_idx = KEYPOINT_DICT['right_shoulder']
-            right_wrist_idx = KEYPOINT_DICT['right_wrist']
-            
-            if (keypoints[right_shoulder_idx][2] > 0.3 and 
-                keypoints[right_wrist_idx][2] > 0.3):
-                
-                shoulder_y = keypoints[right_shoulder_idx][0] * height
-                wrist_y = keypoints[right_wrist_idx][0] * height
-                
-                if wrist_y < shoulder_y:
-                    robot.forward()
-                    cv2.putText(frame, "Moving Forward", (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    processed_keypoints.append((x_px, y_px))
                 else:
-                    robot.stopFB()
+                    processed_keypoints.append(None)
+
+            # Check which side is more visible
+            right_visibility = self.check_side_visibility(keypoints, 'right')
+            left_visibility = self.check_side_visibility(keypoints, 'left')
+            
+            # Initialize variables for angle calculation
+            ear = shoulder = hip = None
+            side_text = ""
+            
+            # Select the more visible side
+            if right_visibility > left_visibility and right_visibility > 0.3:
+                ear = processed_keypoints[KEYPOINT_DICT['right_ear']]
+                shoulder = processed_keypoints[KEYPOINT_DICT['right_shoulder']]
+                hip = processed_keypoints[KEYPOINT_DICT['right_hip']]
+                side_text = "Right"
+            elif left_visibility > 0.3:
+                ear = processed_keypoints[KEYPOINT_DICT['left_ear']]
+                shoulder = processed_keypoints[KEYPOINT_DICT['left_shoulder']]
+                hip = processed_keypoints[KEYPOINT_DICT['left_hip']]
+                side_text = "Left"
+
+            # Check posture if we have valid points
+            if all(point is not None for point in [ear, shoulder, hip]):
+                posture_angle = calculate_angle(ear, shoulder, hip)
+                
+                if posture_angle is not None:
+                    # Draw the angle and side being tracked
+                    cv2.putText(frame, f"{side_text} Side Angle: {posture_angle:.1f}", 
+                              (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                              1, (255, 255, 255), 2)
+
+                    # Check if slouching
+                    if posture_angle < 160:  # Adjustable threshold
+                        cv2.putText(frame, "SLOUCHING DETECTED!", 
+                                  (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 
+                                  1, (0, 0, 255), 2)
+                        #robot.backward()  # Or any other feedback you want
+                    else:
+                        #robot.stopFB()
+                        pass
+
+                    # Draw posture lines
+                    cv2.line(frame, ear, shoulder, (0, 255, 0), 2)
+                    cv2.line(frame, shoulder, hip, (0, 255, 0), 2)
+            else:
+                cv2.putText(frame, "Please face sideways", 
+                          (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                          1, (0, 255, 255), 2)
 
             return frame
 
@@ -170,13 +189,8 @@ class Camera(BaseCamera):
             raise RuntimeError('Could not start camera.')
 
         instance = Camera()
-        frame_count = 0
 
         while True:
             _, img = camera.read()
-            frame_count += 1
-            if frame_count % 30 == 0:  # Only print every 30 frames
-                print(f"Processing frame {frame_count}")
-            
             img = instance.process_pose(img.copy())
             yield cv2.imencode('.jpg', img)[1].tobytes()
