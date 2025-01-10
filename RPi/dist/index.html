@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang=en>
+<head>
+    <meta charset=utf-8>
+    <meta http-equiv=X-UA-Compatible content="IE=edge">
+    <meta name=viewport content="width=device-width,initial-scale=1">
+    <!--[if IE]><link rel="icon" href="/favicon.ico"><![endif]-->
+    <title>WaveShare_PIPPY_Controller</title>
+    <link href=/css/app.8a756fac.css rel=preload as=style>
+    <link href=/css/chunk-vendors.a639f090.css rel=preload as=style>
+    <link href=/js/app.38235a8c.js rel=preload as=script>
+    <link href=/js/chunk-vendors.3007e197.js rel=preload as=script>
+    <link href=/css/chunk-vendors.a639f090.css rel=stylesheet>
+    <link href=/css/app.8a756fac.css rel=stylesheet>
+    <link rel=icon type=image/png sizes=32x32 href=/favicon.ico>
+    <link rel=icon type=image/png sizes=16x16 href=/favicon.ico>
+    <link rel=manifest href=/manifest.json>
+    <meta name=theme-color content=#4DBA87>
+    <meta name=apple-mobile-web-app-capable content=no>
+    <meta name=apple-mobile-web-app-status-bar-style content=default>
+    <meta name=apple-mobile-web-app-title content=WaveShare_PIPPY_Controller>
+    <link rel=apple-touch-icon href=/favicon.ico>
+    <link rel=mask-icon href=/favicon.ico color=#4DBA87>
+    <meta name=msapplication-TileImage content=/favicon.ico>
+    <meta name=msapplication-TileColor content=#000000>
+    <style>
+    .control-button {
+      background-color: #1976D2;
+      color: white;
+      margin: 8px;
+      padding: 0 16px;
+      border-radius: 4px;
+      height: 36px;
+      min-width: 64px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: .0892857143em;
+      font-weight: 500;
+      border: none;
+    }
+    
+    .control-button:hover {
+      background-color: #1565C0;
+    }
+    
+    .control-button:active {
+      background-color: #0D47A1;
+    }
+
+    .control-button.active {
+      background-color: #4CAF50;
+    }
+
+    .control-button.active:hover {
+      background-color: #43A047;
+    }
+
+    .status-text {
+      margin: 8px;
+      color: #666;
+      font-size: 14px;
+    }
+
+#poseButton {
+display: block;
+}
+    </style>
+</head>
+<body>
+    <noscript><strong>We're sorry but WaveShare_PIPPY_Controller doesn't work properly without JavaScript enabled. Please enable it to continue.</strong></noscript>
+    <div id=app></div>
+    <script src=/js/chunk-vendors.3007e197.js></script>
+    <script src=/js/app.38235a8c.js></script>
+    
+    <button id="barkButton" onclick="triggerBark()" class="control-button">
+        <span class="v-btn__content">Bark!</span>
+    </button>
+
+    <button id="poseButton" onclick="togglePose()" class="control-button">
+        <span class="v-btn__content">Toggle Pose Detection</span>
+    </button>
+
+    <div id="poseStatus" class="status-text"></div>
+
+    <script>
+    let poseEnabled = false;
+
+    function triggerBark() {
+        fetch('/api/bark')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'error') {
+                    console.error('Error triggering bark:', data.message);
+                }
+            })
+            .catch(error => console.error('Error:', error));
+    }
+
+    function togglePose() {
+        fetch('/api/pose', {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            poseEnabled = data.status === 'on';
+            const button = document.getElementById('poseButton');
+            const status = document.getElementById('poseStatus');
+            
+            if (poseEnabled) {
+                button.classList.add('active');
+                status.textContent = "Pose Detection Active - Raise right arm above shoulder to move forward";
+            } else {
+                button.classList.remove('active');
+                status.textContent = "";
+            }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+    </script>
+</body>
+</html>
