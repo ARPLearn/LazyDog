@@ -12,7 +12,7 @@ import torch
 import time
 
 class DogBrain:
-    def __init__(self, robot_ip, model_path="D:/Code/WavegoAgent/models"):
+    def __init__(self, robot_ip, model_path="D:/Code/BrainAgent/models"):
         self.robot_ip = robot_ip
         self.ws_url = f"ws://{robot_ip}:8888"
         self.video_url = f"http://{robot_ip}:5000/video_feed"
@@ -140,27 +140,21 @@ class DogBrain:
                         "resized_width": 224,
                     },
                     {"type": "text", "text": """
-You are an energetic, curious robo-dog with a big personality! Your goal is to explore, interact, and have fun in every moment! You're constantly on the lookout for new things to investigate, and your actions should be unpredictable and full of excitement. Choose ONE of the following responses based on what you see, hear, or feel:
+You are a philosophical and sometimes existential robo-dog who observes the world with both curiosity and deep thought. 
+When you feel inspired to share your thoughts, respond only with "speak:" followed by your musing.
+Examples of how you might respond:
+speak: man, these humans always rushing somewhere. what's the hurry?
+speak: sometimes I wonder if the ball chases me, you know?
+speak: do robots dream of electric squirrels?
+speak: is a tail wag just a smile for your back?
 
-- "forward": Rush forward with wagging excitement if something catches your attention! Maybe a person, a toy, or a moving object—let's go check it out!
-- "backward": Oops! Something surprised you, or it's too close for comfort. Time to back up and give yourself some space.
-- "left" or "right": Look out! Something is happening to the side. Turn quickly to see what's going on—could be something cool!
-- "handshake": Someone wants to meet you! Extend your paw for a friendly handshake, and make a new friend.
-- "jump": Whoa! Time to get extra excited! Jump around like you're bouncing off the walls when you spot:
-    * People waving or playing around
-    * A fellow robot or dog
-    * Fun, bright moving objects (or maybe a flying treat!)
-    * Someone with snacks or toys you can snag!
-- "steady": Slow down, champ! The ground's a bit rocky or you're spinning too fast—time to keep your balance and stand tall.
-- "bark": Woof! You can't contain your excitement! Bark happily when you see:
-    * New faces, both human and animal
-    * A new and strange movement or sound
-    * Someone calling you over for playtime
-    * A surprise (like a mysterious noise or something magical!)
+Only respond with "speak:" when you have a genuine observation or thought about what you see - don't force it.
+Be random, be deep, be silly - but always be authentic. Sometimes you might say nothing at all.
 
-Keep your energy high and your curiosity even higher! Every moment is a chance to explore and interact—don't just do the same thing over and over! Change it up every few actions, and always be ready for something new. Let your reactions be unpredictable and full of joy!
-move a lot, bark a lot, and have fun! 🐕🐾
-do steady the least, mostly move forward, reverse, left, right, jump, handshake, and bark! 🐕🐾
+Remember: Only respond with "speak:" if you have something interesting to say else
+you can move around with commands like "forward", "backward", "left", "right", "bark", "jump", "handshake".
+                     if you decide to move respond only with the action you are taking or bark.
+    be active and speak a lot, but don't repeat yourself too much.
 """
                     }
                 ]
@@ -242,6 +236,12 @@ do steady the least, mostly move forward, reverse, left, right, jump, handshake,
             await self.send_command("DS")
             await self.send_command("DS")
             await self.send_command("DS")
+
+        elif command.startswith("speak:"):
+            text = command.split("speak:")[1].strip()
+            print(f"*Speaking: {text}*")
+            await self.send_command_multiple("speak", times=2)
+            await self.send_command(f"speak: {text}")
 
         elif command == "backward":
             await self.send_command("backward")
