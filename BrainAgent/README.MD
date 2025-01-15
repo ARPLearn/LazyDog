@@ -46,6 +46,7 @@ mkdir models
 
 2. Download the Qwen-VL model files:
    * Visit [Qwen-VL Model Page](https://huggingface.co/Qwen/Qwen-VL)
+   * Qwen2-VL-2B-Instruct [Download](https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct/tree/main)
    * Download and place the following files in your `models` directory:
      * `config.json`
      * `generation_config.json`
