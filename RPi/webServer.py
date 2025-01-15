@@ -12,9 +12,34 @@ import asyncio
 import websockets
 import json
 import app
+import pygame
+import pyttsx3
+from queue import Queue
+import threading
 
 ipaddr_check = "192.168.4.1"
 flask_app = None  # Global variable
+engine = pyttsx3.init()
+engine.setProperty('rate', 150)    # Speed
+engine.setProperty('volume', 0.9)  # Volume
+speech_queue = Queue()
+
+def speech_worker():
+    while True:
+        text = speech_queue.get()
+        if text is None:  # Signal to stop thread
+            break
+        try:
+            engine.say(text)
+            engine.runAndWait()
+        except Exception as e:
+            print(f"Speech error: {e}")
+        speech_queue.task_done()
+
+# Start speech thread right after engine initialization
+speech_thread = threading.Thread(target=speech_worker)
+speech_thread.daemon = True
+speech_thread.start()
 
 def ap_thread():
     os.system("sudo create_ap wlan0 eth0 WAVE_BOT 12345678")
@@ -74,34 +99,34 @@ async def recv_msg(websocket):
                     if 'get_info' == data:
                         response['title'] = 'get_info'
                         response['data'] = [info.get_cpu_tempfunc(), info.get_cpu_use(), info.get_ram_info()]
-                    elif 'pose' == data:
-                        flask_app.modeselect('pose')
-                        print('set mode as pose')
-                    elif 'stopPose' == data:
-                        flask_app.modeselect('none')
-                        print('stopped pose detection')
-
-                    elif 'findColor' == data:
-                        flask_app.modeselect('findColor')
-                        print('set mode as findColor')
-
-                    elif 'scan' == data:
-                        print('scanning')
-                        radar_send = [[3,60],[10,70],[10,80],[10,90],[10,100],[10,110],[3,120]]
-                        response['title'] = 'scanResult'
-                        response['data'] = radar_send
-                        time.sleep(0.3)
-
-                    elif 'motionGet' == data:
-                        flask_app.modeselect('watchDog')
-                        print('set mode as watchDog')
-
-                    elif 'stopCV' == data:
-                        flask_app.modeselect('none')
-
-                    elif 'CVFL' == data:
-                        flask_app.modeselect('findlineCV')
-                        print('set mode as findlineCV')
+                        
+                    elif data.startswith('speak:'):
+                        text = data.replace('speak:', '').strip()
+                        try:
+                            speech_queue.put(text)  # Add to queue instead of speaking directly
+                            response['title'] = 'speak'
+                            response['data'] = 'Speech queued'
+                        except Exception as e:
+                            response['status'] = 'error'
+                            response['data'] = str(e)
+                        
+                    elif 'bark' == data:
+                        try:
+                            pygame.mixer.init()
+                            sound_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'sounds', 'bark.mp3')
+                            
+                            if os.path.exists(sound_file):
+                                pygame.mixer.music.load(sound_file)
+                                pygame.mixer.music.play()
+                                time.sleep(0.1)
+                                response['title'] = 'bark'
+                                response['data'] = 'Bark initiated'
+                            else:
+                                response['status'] = 'error'
+                                response['data'] = 'Sound file not found'
+                        except Exception as e:
+                            response['status'] = 'error'
+                            response['data'] = str(e)
 
                     elif 'CVFLColorSet' in data:
                         color = int(data.split()[1])

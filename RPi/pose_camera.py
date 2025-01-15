@@ -184,6 +184,7 @@ class Camera(BaseCamera):
                         cv2.putText(frame, "SLOUCHING DETECTED!", 
                                   (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 
                                   1, (0, 0, 255), 2)
+                        play_bark()
                     
                     # Draw posture lines
                     cv2.line(frame, ear, shoulder, (0, 255, 0), 2)
