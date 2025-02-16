@@ -1,3 +1,15 @@
 /BrainAgent/models/model-00001-of-00002.safetensors
 /BrainAgent/models/model-00002-of-00002.safetensors
 /BrainAgent/qwen_robot_env
+custom.toml
+**/.DS_Store
+.DS_Store
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+**/Thumbs.db
+**/model.safetensors.index.json
+**/tokenizer.json
+**/vocab.json
+**/tokenizer_config.json
+**/preprocessor_config.json

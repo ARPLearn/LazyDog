@@ -444,64 +444,114 @@ you can move around with commands like "forward", "backward", "left", "right", "
             look_dir = random.choice(["lookright", "lookleft"])
             await self.movement_sequence(look_dir, duration=1.0, stop_command="LRstop")
             
-    async def generate_response(self, text):
-        """Generate a response using the LLM"""
+    async def generate_response(self, text, frame=None):
+        """Generate a response using the LLM with optional visual context"""
         try:
+            # Prepare the image input if a frame is provided
+            image_base64 = self.image_base64
+            if frame is not None:
+                # Convert frame to base64
+                _, buffer = cv2.imencode('.jpg', frame)
+                if buffer is not None:
+                    image_base64 = f"data:image/jpeg;base64,{base64.b64encode(buffer).decode('utf-8')}"
+
+            # Prepare messages for the model
             messages = [{
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": f"""
-You are a philosophical and sometimes existential robo-dog who observes the world with both curiosity and deep thought. 
-When you feel inspired to share your thoughts, respond only with "speak:" followed by your musing.
-Examples of how you might respond:
-speak: man, these humans always rushing somewhere. what's the hurry?
-speak: sometimes I wonder if the ball chases me, you know?
-speak: do robots dream of electric squirrels?
-speak: is a tail wag just a smile for your back?
-
-Only respond with "speak:" when you have a genuine observation or thought about what you see - don't force it.
-Be random, be deep, be silly - but always be authentic. Sometimes you might say nothing at all.
-
-Remember: Only respond with "speak:" if you have something interesting to say and to answer questions.
-you can move around with commands like "forward", "backward", "left", "right", "bark", "jump", "handshake".
-                     if you decide to move respond only with the action you are taking or bark.
-    be active and speak a lot, but don't repeat yourself too much.
-    
-    QUESTION: {text}
-"""
-                    }
-                ]
+                "content": []
             }]
 
-            text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self.processor(
-                text=[text],
-                padding=True,
-                return_tensors="pt"
-            )
-            inputs = inputs.to(self.model.device)
+            # Add image to messages if available
+            if self.image_base64:
+                print("Adding image to messages")
+                messages[0]["content"].append({
+                    "type": "image",
+                    "image": self.image_base64,
+                    "resized_height": 224,
+                    "resized_width": 224,
+                })
 
-            generated_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=20,
-                num_beams=1,
-                do_sample=True,
-                temperature=0.9,  # Increased for more randomness
-                top_p=0.95,      # Increased for more variety
-            )
-            
-            generated_ids_trimmed = [
-                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-            ]
-            
-            response = self.processor.batch_decode(
-                generated_ids_trimmed,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False
-            )[0]
-            
-            return response
-            
+            # Add text prompt
+            messages[0]["content"].append({
+                "type": "text", 
+                "text": f"""
+    You are a philosophical and sometimes existential robo-dog who observes the world with both curiosity and deep thought. 
+    Respond to the following question or statement creatively:
+
+    Guidelines:
+    - Be concise and witty
+    - Use a mix of robotic and philosophical language
+    - If you have a visual context, incorporate it into your response
+    - Responses can be:
+    1. A philosophical musing (starting with "speak:")
+    2. A direct answer
+    3. A playful or sarcastic comment
+
+    QUESTION/STATEMENT: {text}
+
+    Possible response formats:
+    - "speak: [philosophical musing]"
+    - "[direct answer]"
+    - "[witty comment]"
+    """
+            })
+
+            # Prepare inputs for the model
+            try:
+                # Use custom processing function for vision inputs
+                image_inputs, _ = process_vision_info(messages) if image_base64 else (None, None)
+                
+                # Apply chat template
+                text_input = self.processor.apply_chat_template(
+                    messages, 
+                    tokenize=False, 
+                    add_generation_prompt=True
+                )
+
+                # Prepare model inputs
+                inputs_kwargs = {
+                    "text": [text_input],
+                    "padding": True,
+                    "return_tensors": "pt"
+                }
+                
+                # Add image inputs if available
+                if image_inputs is not None:
+                    inputs_kwargs["images"] = image_inputs
+
+                inputs = self.processor(**inputs_kwargs).to(self.model.device)
+
+                # Generate response
+                generated_ids = self.model.generate(
+                    **inputs,
+                    max_new_tokens=50,
+                    num_beams=1,
+                    do_sample=True,
+                    temperature=0.9,
+                    top_p=0.95,
+                )
+
+                # Decode the generated response
+                generated_ids_trimmed = [
+                    out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+                ]
+                
+                response = self.processor.batch_decode(
+                    generated_ids_trimmed,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False
+                )[0].strip()
+
+                # Sanitize response
+                if not response:
+                    return "Woof! (Thinking...)"
+                
+                return response
+
+            except Exception as processing_error:
+                print(f"Model processing error: {processing_error}")
+                return "Woof! (Sorry, my circuits are a bit tangled)"
+
         except Exception as e:
             print(f"Response generation error: {e}")
             return "Woof! (Sorry, I'm having trouble thinking right now)"
@@ -520,23 +570,33 @@ you can move around with commands like "forward", "backward", "left", "right", "
                 # Initial startup behavior
                 print("🐕 Waking up and stretching!")
                 await self.send_command("speak:Hello! I'm awake!")
-                
-                last_process_time = 0
+                frame = self.frame_queue.get()
+                perception = await self.analyze_frame(frame)
+                if perception:
+                    await self.dog_reaction(perception)
+                                
+                last_visual_processing_time = 0
                 process_interval = random.uniform(2.5, 3.5)  # Random interval
 
                 while self.running:
                     # Process voice commands first
+                    current_time = time.time()
+                    
                     while not self.voice_queue.empty():
                         command = self.voice_queue.get()
                         await self.process_voice_command(command)
                         await asyncio.sleep(0.1)
                     
                     # Then process visual input
-                    if not self.frame_queue.empty():
-                        frame = self.frame_queue.get()
-                        perception = await self.analyze_frame(frame)
-                        if perception:
-                            await self.dog_reaction(perception)
+                    if current_time - last_visual_processing_time >= 30:
+                        if not self.frame_queue.empty():
+                            frame = self.frame_queue.get()
+                            perception = await self.analyze_frame(frame)
+                            if perception:
+                                await self.dog_reaction(perception)
+                            
+                    # Update the last processing time
+                    last_visual_processing_time = current_time
                     
                     await asyncio.sleep(0.1)
 
@@ -548,6 +608,6 @@ you can move around with commands like "forward", "backward", "left", "right", "
                 voice_thread.join()
 
 if __name__ == "__main__":
-    ROBOT_IP = "192.168.0.214"  # Your robot's IP
+    ROBOT_IP = "192.168.0.213"  # Your robot's IP
     brain = DogBrain(ROBOT_IP)
     asyncio.run(brain.run())
