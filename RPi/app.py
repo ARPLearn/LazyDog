@@ -11,7 +11,7 @@ import threading
 from flask import jsonify
 import pygame
 import time
-from pose_camera import Camera
+from camera import Camera  
 
 # Raspberry Pi camera module (requires picamera package)
 # from camera_pi import Camera
@@ -92,7 +92,6 @@ class webapp:
 
     def commandInput(self, inputCommand, valueA=None):
         commandAct(inputCommand, valueA)
-
 
     def thread(self):
         app.run(host='0.0.0.0', threaded=True)
