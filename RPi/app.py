@@ -1,10 +1,20 @@
 #!/usr/bin/env python
+from importlib import import_module
+import os
 from flask import Flask, render_template, Response, send_from_directory
 from flask_cors import *
-import os
-from camera import Camera  # Use the new camera implementation
+# import camera driver
+#import camera_opencv
+#from camera_opencv import Camera
+from camera_opencv import commandAct
 import threading
-import robot
+from flask import jsonify
+import pygame
+import time
+from pose_camera import Camera
+
+# Raspberry Pi camera module (requires picamera package)
+# from camera_pi import Camera
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
@@ -22,6 +32,7 @@ def video_feed():
     """Video streaming route. Put this in the src attribute of an img tag."""
     return Response(gen(camera),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -49,6 +60,28 @@ def sendfonts(filename):
 def sendgen(filename):
     return send_from_directory(dir_path+'/dist', filename)
 
+@app.route('/api/bark')
+def bark():
+    """Endpoint to trigger bark sound"""
+    try:
+        # Initialize pygame mixer
+        pygame.mixer.init()
+        
+        # Use absolute path to sound file
+        sound_file = os.path.join(dir_path, 'sounds', 'bark.mp3')
+        
+        if os.path.exists(sound_file):
+            pygame.mixer.music.load(sound_file)
+            pygame.mixer.music.play()
+            # Wait briefly for sound to start
+            time.sleep(0.1)
+            return jsonify({"status": "success", "message": "Bark initiated"})
+        else:
+            return jsonify({"status": "error", "message": "Sound file not found"}), 404
+            
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/')
 def index():
     return send_from_directory(dir_path+'/dist', 'index.html')
@@ -58,8 +91,8 @@ class webapp:
         self.camera = camera
 
     def commandInput(self, inputCommand, valueA=None):
-        # Handle robot control commands
-        pass
+        commandAct(inputCommand, valueA)
+
 
     def thread(self):
         app.run(host='0.0.0.0', threaded=True)
