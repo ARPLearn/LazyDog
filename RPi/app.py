@@ -11,7 +11,7 @@ import threading
 from flask import jsonify
 import pygame
 import time
-from pose_camera import Camera
+from camera import Camera  
 
 # Raspberry Pi camera module (requires picamera package)
 # from camera_pi import Camera
@@ -33,15 +33,6 @@ def video_feed():
     return Response(gen(camera),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
-@app.route('/api/pose', methods=['POST'])
-def toggle_pose():
-    """Toggle pose detection mode"""
-    if camera.modeSelect == 'pose':
-        camera.modeSelect = 'none'
-        return {'status': 'off'}
-    else:
-        camera.modeSelect = 'pose'
-        return {'status': 'on'}
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -98,16 +89,9 @@ def index():
 class webapp:
     def __init__(self):
         self.camera = camera
-        self.camera.modeSelect = 'pose'
 
     def commandInput(self, inputCommand, valueA=None):
         commandAct(inputCommand, valueA)
-
-    def modeselect(self, modeInput):
-        self.camera.modeSelect = modeInput
-
-    def colorFindSet(self, H, S, V):
-        camera.colorFindSet(H, S, V)
 
     def thread(self):
         app.run(host='0.0.0.0', threaded=True)
